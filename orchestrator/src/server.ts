@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import * as dotenv from 'dotenv';
 import * as path from 'path';
+import { createServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { checkEnv } from './checkEnv';
 import { NotionClientWrapper } from './notion/client';
@@ -15,12 +16,12 @@ checkEnv('server');
 
 const app = express();
 const port = process.env.PORT || 3000;
-
 app.use(cors());
 app.use(express.json());
+const server = createServer(app);
 
-// Initialize WebSocket server on port 4000 for live FSM updates
-const wss = new WebSocketServer({ port: 4000 });
+// Initialize WebSocket server on the same HTTP server for cloud hosting compatibility
+const wss = new WebSocketServer({ server });
 
 wss.on('connection', (ws: WebSocket) => {
   console.log('Frontend client connected via WebSocket');
@@ -267,7 +268,7 @@ app.post('/webhooks/notion', async (req, res) => {
 });
 
 // Start the server
-app.listen(port, () => {
+server.listen(port, () => {
   console.log(`\x1b[32m✔ CorpusAI Orchestrator listening on port ${port}\x1b[0m`);
   
   // Start the background polling fallback
