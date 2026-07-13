@@ -2,7 +2,7 @@
 
 This project implements a multi-agent system where three departments (Marketing, Finance, Engineering) coordinate under a central state-machine Orchestrator. 
 
-## System Architecture
+# System Architecture
 
 ```mermaid
 graph TD
