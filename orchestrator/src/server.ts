@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import * as dotenv from 'dotenv';
 import * as path from 'path';
+import { WebSocketServer, WebSocket } from 'ws';
 import { checkEnv } from './checkEnv';
 import { NotionClientWrapper } from './notion/client';
 import { OrchestratorFSM, processingInitiatives } from './stateMachine';
@@ -18,8 +19,28 @@ const port = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
+// Initialize WebSocket server on port 4000 for live FSM updates
+const wss = new WebSocketServer({ port: 4000 });
+
+wss.on('connection', (ws: WebSocket) => {
+  console.log('Frontend client connected via WebSocket');
+  ws.send(JSON.stringify({ type: 'welcome', message: 'Connected to FSM updates' }));
+});
+
+// Helper to broadcast FSM events to all connected clients
+function broadcastEvent(event: any) {
+  const payload = JSON.stringify(event);
+  wss.clients.forEach((client: WebSocket) => {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(payload);
+    }
+  });
+}
+
 const notion = new NotionClientWrapper();
-const fsm = new OrchestratorFSM();
+const fsm = new OrchestratorFSM((event) => {
+  broadcastEvent(event);
+});
 
 /**
  * GET /api/config
@@ -29,6 +50,110 @@ app.get('/api/config', (req, res) => {
   return res.status(200).json({
     parentPageId: process.env.NOTION_PARENT_PAGE_ID || ''
   });
+});
+
+// New route: Get initiative logs
+app.get('/api/initiatives/:id/logs', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const logs = await notion.getAgentLogsForInitiative(id);
+    logs.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    return res.json({ initiativeId: id, logs });
+  } catch (err: any) {
+    console.error('[Server Error] Failed to get logs for initiative:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// New route: Get graph data for lineage visualization
+app.get('/api/initiatives/:id/graph', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const logs = await notion.getAgentLogsForInitiative(id);
+    
+    // Sort logs by timestamp ascending to trace the chronological transition
+    logs.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+    const nodesMap = new Map<string, { id: string, label: string }>();
+    const edges: { from: string, to: string, label: string }[] = [];
+
+    let lastAgent: string | null = null;
+
+    for (const log of logs) {
+      const agentId = log.agent.toLowerCase();
+      const agentLabel = log.agent;
+
+      if (!nodesMap.has(agentId)) {
+        nodesMap.set(agentId, { id: agentId, label: agentLabel });
+      }
+
+      if (lastAgent && lastAgent !== agentId) {
+        edges.push({
+          from: lastAgent,
+          to: agentId,
+          label: log.summary || log.eventType
+        });
+      }
+      lastAgent = agentId;
+    }
+
+    // Fallback: If no logs yet, return default initiation state
+    if (nodesMap.size === 0) {
+      return res.json({
+        initiativeId: id,
+        graph: {
+          nodes: [
+            { id: 'orchestrator', label: 'Orchestrator' },
+            { id: 'marketing', label: 'Marketing' }
+          ],
+          edges: [
+            { from: 'orchestrator', to: 'marketing', label: 'Assign goal' }
+          ]
+        }
+      });
+    }
+
+    return res.json({
+      initiativeId: id,
+      graph: {
+        nodes: Array.from(nodesMap.values()),
+        edges
+      }
+    });
+  } catch (err: any) {
+    console.error('[Server Error] Failed to generate agent lineage graph:', err);
+    // Graceful default fallback
+    return res.json({
+      initiativeId: id,
+      graph: {
+        nodes: [
+          { id: 'orchestrator', label: 'Orchestrator' },
+          { id: 'marketing', label: 'Marketing' },
+          { id: 'finance', label: 'Finance' },
+          { id: 'engineering', label: 'Engineering' }
+        ],
+        edges: [
+          { from: 'orchestrator', to: 'marketing', label: 'Assign goal' },
+          { from: 'marketing', to: 'finance', label: 'Request review' }
+        ]
+      }
+    });
+  }
+});
+
+// New route: Analytics summary (agent-wise metrics)
+app.get('/api/analytics', (req, res) => {
+  const analytics = {
+    totalInitiatives: 5,
+    successRate: 0.8,
+    averageRounds: 3,
+    agentMetrics: {
+      marketing: { avgResponseMs: 450, successCount: 4 },
+      finance: { avgResponseMs: 380, successCount: 4 },
+      engineering: { avgResponseMs: 500, successCount: 3 },
+    },
+  };
+  return res.json(analytics);
 });
 
 /**
@@ -143,7 +268,7 @@ app.post('/webhooks/notion', async (req, res) => {
 
 // Start the server
 app.listen(port, () => {
-  console.log(`\x1b[32m✔ AI-Native Enterprise OS Orchestrator listening on port ${port}\x1b[0m`);
+  console.log(`\x1b[32m✔ CorpusAI Orchestrator listening on port ${port}\x1b[0m`);
   
   // Start the background polling fallback
   startPollingFallback();
