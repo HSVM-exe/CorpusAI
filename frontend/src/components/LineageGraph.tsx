@@ -18,56 +18,56 @@ const LineageGraph: React.FC<LineageGraphProps> = ({ data, activeStatus }) => {
     if (!data || !svgRef.current) return;
     
     const container = svgRef.current.parentElement;
-    const width = container ? container.clientWidth : 600;
-    const height = 300;
+    const width = container ? container.clientWidth : 700;
+    const height = 420;
 
     const svg = d3.select(svgRef.current);
     svg.selectAll('*').remove();
+    svg.attr('viewBox', `0 0 ${width} ${height}`);
 
-    // Setup definitions for gradients and glow filters
+    // --- Defs: gradients, glow, pulse ---
     const defs = svg.append('defs');
     
-    // Drop shadow / Glow filter
+    // Glow filter
     const glowFilter = defs.append('filter')
       .attr('id', 'glow')
-      .attr('x', '-50%')
-      .attr('y', '-50%')
-      .attr('width', '200%')
-      .attr('height', '200%');
-    glowFilter.append('feGaussianBlur')
-      .attr('stdDeviation', '4')
-      .attr('result', 'coloredBlur');
+      .attr('x', '-50%').attr('y', '-50%')
+      .attr('width', '200%').attr('height', '200%');
+    glowFilter.append('feGaussianBlur').attr('stdDeviation', '4').attr('result', 'coloredBlur');
     const feMerge = glowFilter.append('feMerge');
     feMerge.append('feMergeNode').attr('in', 'coloredBlur');
     feMerge.append('feMergeNode').attr('in', 'SourceGraphic');
 
-    // Radials for nodes
+    // Soft glow for hovered links
+    const linkGlow = defs.append('filter')
+      .attr('id', 'link-glow')
+      .attr('x', '-50%').attr('y', '-50%')
+      .attr('width', '200%').attr('height', '200%');
+    linkGlow.append('feGaussianBlur').attr('stdDeviation', '2').attr('result', 'blur');
+    const lm = linkGlow.append('feMerge');
+    lm.append('feMergeNode').attr('in', 'blur');
+    lm.append('feMergeNode').attr('in', 'SourceGraphic');
+
+    // Agent gradient colors
     const agentColors: Record<string, string[]> = {
-      orchestrator: ['#a78bfa', '#6d28d9'], // purple
-      marketing: ['#f472b6', '#db2777'],    // pink
-      finance: ['#34d399', '#059669'],      // green
-      engineering: ['#60a5fa', '#2563eb'],  // blue
-      github: ['#fbbf24', '#d97706'],       // gold
-      slack: ['#fb7185', '#e11d48'],        // rose
-      default: ['#9ca3af', '#4b5563']       // grey
+      orchestrator: ['#a78bfa', '#6d28d9'],
+      marketing: ['#f472b6', '#db2777'],
+      finance: ['#34d399', '#059669'],
+      engineering: ['#60a5fa', '#2563eb'],
+      github: ['#fbbf24', '#d97706'],
+      slack: ['#fb7185', '#e11d48'],
+      default: ['#9ca3af', '#4b5563']
     };
 
     Object.entries(agentColors).forEach(([key, colors]) => {
       const grad = defs.append('radialGradient')
         .attr('id', `grad-${key}`)
-        .attr('cx', '30%')
-        .attr('cy', '30%')
-        .attr('r', '70%');
-      
-      grad.append('stop')
-        .attr('offset', '0%')
-        .attr('stop-color', colors[0]);
-      
-      grad.append('stop')
-        .attr('offset', '100%')
-        .attr('stop-color', colors[1]);
+        .attr('cx', '30%').attr('cy', '30%').attr('r', '70%');
+      grad.append('stop').attr('offset', '0%').attr('stop-color', colors[0]);
+      grad.append('stop').attr('offset', '100%').attr('stop-color', colors[1]);
     });
 
+    // --- Data Preparation ---
     const d3Links = data.edges.map(e => ({
       source: e.from,
       target: e.to,
@@ -75,133 +75,188 @@ const LineageGraph: React.FC<LineageGraphProps> = ({ data, activeStatus }) => {
     }));
 
     const simulation = d3.forceSimulation(data.nodes as any)
-      .force('link', d3.forceLink(d3Links).id((d: any) => d.id).distance(140))
-      .force('charge', d3.forceManyBody().strength(-200))
+      .force('link', d3.forceLink(d3Links).id((d: any) => d.id).distance(180))
+      .force('charge', d3.forceManyBody().strength(-350))
       .force('center', d3.forceCenter(width / 2, height / 2))
-      .force('x', d3.forceX(width / 2).strength(0.08))
-      .force('y', d3.forceY(height / 2).strength(0.08));
+      .force('collision', d3.forceCollide().radius(50))
+      .force('x', d3.forceX(width / 2).strength(0.06))
+      .force('y', d3.forceY(height / 2).strength(0.06));
 
-    // Link Lines (Background connection lines)
-    const link = svg
-      .append('g')
-      .selectAll('path')
+    // --- Tooltip div (appended to body once) ---
+    let tooltip = d3.select('body').select('.lineage-tooltip');
+    if (tooltip.empty()) {
+      tooltip = d3.select('body').append('div')
+        .attr('class', 'lineage-tooltip')
+        .style('position', 'fixed')
+        .style('pointer-events', 'none')
+        .style('background', 'rgba(15, 15, 25, 0.95)')
+        .style('color', '#e2e8f0')
+        .style('padding', '8px 14px')
+        .style('border-radius', '8px')
+        .style('font-size', '0.75rem')
+        .style('max-width', '280px')
+        .style('line-height', '1.4')
+        .style('border', '1px solid rgba(139, 92, 246, 0.4)')
+        .style('box-shadow', '0 4px 20px rgba(0,0,0,0.5)')
+        .style('z-index', '9999')
+        .style('opacity', '0')
+        .style('transition', 'opacity 0.15s ease');
+    }
+
+    // --- Link hit areas (invisible wide paths for easy hover) ---
+    const linkHitArea = svg.append('g')
+      .selectAll('path.hit')
       .data(d3Links)
       .enter()
       .append('path')
+      .attr('class', 'hit')
       .attr('fill', 'none')
-      .attr('stroke', 'rgba(255, 255, 255, 0.15)')
-      .attr('stroke-width', 2.5);
+      .attr('stroke', 'transparent')
+      .attr('stroke-width', 18)
+      .style('cursor', 'pointer');
 
-    // Glowing Animated Particles flowing along connections
-    const particles = svg
-      .append('g')
+    // --- Visible link lines ---
+    const link = svg.append('g')
+      .selectAll('path.link-line')
+      .data(d3Links)
+      .enter()
+      .append('path')
+      .attr('class', 'link-line')
+      .attr('fill', 'none')
+      .attr('stroke', 'rgba(255, 255, 255, 0.12)')
+      .attr('stroke-width', 2)
+      .style('pointer-events', 'none');
+
+    // --- Glowing particles ---
+    const particles = svg.append('g')
       .selectAll('circle.particle')
       .data(d3Links)
       .enter()
       .append('circle')
       .attr('class', 'particle')
-      .attr('r', 3.5)
-      .attr('fill', '#a5f3fc') // bright cyan glowing particle
+      .attr('r', 3)
+      .attr('fill', '#a5f3fc')
       .style('filter', 'url(#glow)')
-      .each(function(d: any) {
-        d.t = Math.random(); // randomize starting position on the connection path
+      .each(function(d: any) { d.t = Math.random(); });
+
+    // --- Hover events on link hit areas ---
+    linkHitArea
+      .on('mouseenter', function(_event: any, d: any) {
+        link.filter((ld: any) => ld === d)
+          .attr('stroke', 'rgba(167, 139, 250, 0.6)')
+          .attr('stroke-width', 3)
+          .style('filter', 'url(#link-glow)');
+
+        if (d.label) {
+          tooltip
+            .html(`<strong style="color:#a78bfa;">↔ ${getNodeLabel(d.source)} → ${getNodeLabel(d.target)}</strong><br/>${d.label}`)
+            .style('opacity', '1');
+        }
+      })
+      .on('mousemove', function(event: any) {
+        tooltip
+          .style('left', (event.clientX + 14) + 'px')
+          .style('top', (event.clientY - 10) + 'px');
+      })
+      .on('mouseleave', function(_event: any, d: any) {
+        link.filter((ld: any) => ld === d)
+          .attr('stroke', 'rgba(255, 255, 255, 0.12)')
+          .attr('stroke-width', 2)
+          .style('filter', 'none');
+        tooltip.style('opacity', '0');
       });
 
-    // Link Label Texts
-    const linkLabel = svg
-      .append('g')
-      .selectAll('text')
-      .data(d3Links)
-      .enter()
-      .append('text')
-      .attr('text-anchor', 'middle')
-      .style('font-size', '0.65rem')
-      .style('fill', 'rgba(255, 255, 255, 0.45)')
-      .text((d: any) => d.label || '');
+    function getNodeLabel(node: any): string {
+      return typeof node === 'string' ? node : (node.label || node.id || '');
+    }
 
-    // Drag helper
+    // --- Drag handler ---
     const drag = d3.drag<SVGGElement, any>()
       .on('start', (event: any, d: any) => {
         if (!event.active) simulation.alphaTarget(0.3).restart();
-        d.fx = d.x;
-        d.fy = d.y;
+        d.fx = d.x; d.fy = d.y;
       })
       .on('drag', (event: any, d: any) => {
-        d.fx = event.x;
-        d.fy = event.y;
+        d.fx = event.x; d.fy = event.y;
       })
       .on('end', (event: any, d: any) => {
         if (!event.active) simulation.alphaTarget(0);
-        d.fx = null;
-        d.fy = null;
+        d.fx = null; d.fy = null;
       });
 
-    // Node groups containing circles and labels
-    const node = svg
-      .append('g')
-      .selectAll('g')
+    // --- Nodes ---
+    const node = svg.append('g')
+      .selectAll('g.node')
       .data(data.nodes as any)
       .enter()
       .append('g')
+      .attr('class', 'node')
       .call(drag);
 
-    // Node circle representation
+    // Outer pulse ring for active agents
     node.append('circle')
-      .attr('r', (d: any) => {
-        // Enlarge active agents relative to status
-        const isCurrentAgent = getIsActiveAgent(d.id, activeStatus);
-        return isCurrentAgent ? 26 : 20;
+      .attr('class', 'pulse-ring')
+      .attr('r', 32)
+      .attr('fill', 'none')
+      .attr('stroke', (d: any) => {
+        const colorKey = agentColors[d.id] ? d.id : 'default';
+        return agentColors[colorKey][0];
       })
+      .attr('stroke-width', 1.5)
+      .attr('opacity', (d: any) => getIsActiveAgent(d.id, activeStatus) ? 0.5 : 0);
+
+    // Main node circle
+    node.append('circle')
+      .attr('r', (d: any) => getIsActiveAgent(d.id, activeStatus) ? 26 : 20)
       .attr('fill', (d: any) => {
         const colorKey = agentColors[d.id] ? d.id : 'default';
         return `url(#grad-${colorKey})`;
       })
-      .style('filter', (d: any) => {
-        const isCurrentAgent = getIsActiveAgent(d.id, activeStatus);
-        return isCurrentAgent ? 'url(#glow)' : 'none';
-      })
-      .attr('stroke', (d: any) => {
-        const isCurrentAgent = getIsActiveAgent(d.id, activeStatus);
-        return isCurrentAgent ? '#ffffff' : 'rgba(255, 255, 255, 0.3)';
-      })
-      .attr('stroke-width', (d: any) => {
-        const isCurrentAgent = getIsActiveAgent(d.id, activeStatus);
-        return isCurrentAgent ? 2.5 : 1.5;
-      });
+      .style('filter', (d: any) => getIsActiveAgent(d.id, activeStatus) ? 'url(#glow)' : 'none')
+      .attr('stroke', (d: any) => getIsActiveAgent(d.id, activeStatus) ? '#ffffff' : 'rgba(255, 255, 255, 0.3)')
+      .attr('stroke-width', (d: any) => getIsActiveAgent(d.id, activeStatus) ? 2.5 : 1.5);
 
-    // Node label texts
+    // Node label
     node.append('text')
       .attr('text-anchor', 'middle')
-      .attr('dy', (d: any) => {
-        const isCurrentAgent = getIsActiveAgent(d.id, activeStatus);
-        return isCurrentAgent ? 34 : 28;
-      })
-      .style('font-size', '0.75rem')
-      .style('font-weight', '600')
+      .attr('dy', (d: any) => getIsActiveAgent(d.id, activeStatus) ? 40 : 34)
+      .style('font-size', '0.8rem')
+      .style('font-weight', '700')
       .style('fill', 'var(--text-primary)')
-      .style('text-shadow', '0 2px 4px rgba(0,0,0,0.8)')
+      .style('text-shadow', '0 2px 6px rgba(0,0,0,0.9)')
+      .style('letter-spacing', '0.02em')
       .text((d: any) => d.label);
 
-    simulation.on('tick', () => {
-      // Connect nodes via straight lines
-      link.attr('d', (d: any) => {
-        return `M${d.source.x},${d.source.y} L${d.target.x},${d.target.y}`;
-      });
+    // --- Animated pulse ring ---
+    function animatePulse() {
+      node.selectAll('.pulse-ring')
+        .filter((_d: any, i: any, nodes: any) => {
+          const d = d3.select(nodes[i]).datum() as any;
+          return getIsActiveAgent(d.id, activeStatus);
+        })
+        .transition()
+        .duration(1500)
+        .attr('r', 38)
+        .attr('opacity', 0)
+        .transition()
+        .duration(0)
+        .attr('r', 28)
+        .attr('opacity', 0.5)
+        .on('end', animatePulse);
+    }
+    animatePulse();
 
-      // Update particle flows along links
+    // --- Simulation tick ---
+    simulation.on('tick', () => {
+      const pathStr = (d: any) => `M${d.source.x},${d.source.y} L${d.target.x},${d.target.y}`;
+      link.attr('d', pathStr);
+      linkHitArea.attr('d', pathStr);
+
       particles
         .attr('cx', (d: any) => d.source.x + d.t * (d.target.x - d.source.x))
         .attr('cy', (d: any) => d.source.y + d.t * (d.target.y - d.source.y))
-        .each(function(d: any) {
-          d.t = (d.t + 0.008) % 1.0; // speed of particle flow
-        });
+        .each(function(d: any) { d.t = (d.t + 0.006) % 1.0; });
 
-      // Update link labels to follow midpoints
-      linkLabel
-        .attr('x', (d: any) => (d.source.x + d.target.x) / 2)
-        .attr('y', (d: any) => (d.source.y + d.target.y) / 2 - 6);
-
-      // Move group node coordinates
       node.attr('transform', (d: any) => `translate(${d.x},${d.y})`);
     });
 
@@ -210,11 +265,9 @@ const LineageGraph: React.FC<LineageGraphProps> = ({ data, activeStatus }) => {
     };
   }, [data, activeStatus]);
 
-  // Determine if this D3 node represents an active agent based on initiative status
   function getIsActiveAgent(nodeId: string, status?: string): boolean {
     if (!status) return false;
     const cleanId = nodeId.toLowerCase();
-    
     switch (status) {
       case 'Planning':
         return cleanId === 'marketing' || cleanId === 'finance' || cleanId === 'orchestrator';
@@ -234,12 +287,12 @@ const LineageGraph: React.FC<LineageGraphProps> = ({ data, activeStatus }) => {
     <svg 
       ref={svgRef} 
       width="100%" 
-      height="300" 
+      height="420" 
       style={{ 
-        background: 'rgba(0, 0, 0, 0.25)', 
+        background: 'radial-gradient(ellipse at center, rgba(15, 10, 40, 0.6) 0%, rgba(0, 0, 0, 0.35) 100%)', 
         borderRadius: '12px', 
         border: '1px solid var(--border-color)',
-        overflow: 'hidden'
+        overflow: 'visible'
       }} 
     />
   );
