@@ -83,7 +83,7 @@ const LineageGraph: React.FC<LineageGraphProps> = ({ data, activeStatus }) => {
       .force('y', d3.forceY(height / 2).strength(0.06));
 
     // --- Tooltip div (appended to body once) ---
-    let tooltip = d3.select('body').select('.lineage-tooltip');
+    let tooltip: d3.Selection<any, any, any, any> = d3.select('body').select('.lineage-tooltip');
     if (tooltip.empty()) {
       tooltip = d3.select('body').append('div')
         .attr('class', 'lineage-tooltip')
